@@ -1,0 +1,23 @@
+{
+  "account_id": "111122223333",
+  "region": "us-east-1",
+  "collected_at": "2026-10-25T09:00:00Z",
+  "as_of": "2026-10-25",
+  "iam_complete": true,
+  "workload_scan_complete": true,
+  "context_complete": true,
+  "collection_errors": [],
+  "roles": [{
+    "arn": "arn:aws:iam::111122223333:role/shared-demo",
+    "policy_coverage_complete": true,
+    "policies": [{
+      "evidence_id": "policy:shared-demo:v1",
+      "source": "INVENTED FIXTURE: shared-demo / broad-example",
+      "document": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+    }]
+  }],
+  "workloads": [
+    {"id": "support-demo", "role_arn": "arn:aws:iam::111122223333:role/shared-demo", "environment": "production", "owner": null, "owner_accepted": false, "purpose": "INVENTED FIXTURE: read support records", "review_due": "2026-10-01"},
+    {"id": "billing-demo", "role_arn": "arn:aws:iam::111122223333:role/shared-demo", "environment": "production", "owner": "Example billing team", "owner_accepted": true, "purpose": "INVENTED FIXTURE: process billing jobs", "review_due": "2026-11-01"}
+  ]
+}
