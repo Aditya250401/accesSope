@@ -1,7 +1,9 @@
+# Local interpreter, caches and compiled Python files are reproducible artifacts.
 .venv/
 .cache/
 .pytest_cache/
 __pycache__/
+# Credentials and local review artifacts must not become repository source files.
 .env
 outputs/
 *.db

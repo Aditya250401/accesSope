@@ -4,6 +4,12 @@ A local identity-governance prototype that turns scoped AWS configuration into e
 
 **Repository:** [Aditya250401/accesSope](https://github.com/Aditya250401/accesSope). The project is named **AccessScope**; `accesSope` is the repository slug.
 
+## Learn the implementation
+
+Start with the [guided repository walkthrough](WALKTHROUGH.md). It connects one example across the input, contracts, rules, graph state, model boundary, review and audit, with reading stops and questions to answer. The Python modules contain matching comments explaining the purpose of each stage.
+
+After `uv sync --locked`, run `uv run python -m accessscope.walkthrough` to watch real node updates, pause/resume and a duplicate audit write. This learning command uses the fictional fixture and scripted explanation, makes no AWS/model calls, and removes its temporary audit database afterward.
+
 ## What it checks
 
 | Check | Evidence used | Result |
