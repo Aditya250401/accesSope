@@ -22,6 +22,7 @@ from accessscope.workflow import DemoExplainer, OpenAIExplainer, build_graph, re
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
     # autouse applies this to every test. "Live adapter" tests below use fake
     # clients; attempting a real connection in this suite raises immediately.
     def blocked(*args, **kwargs):
@@ -223,7 +224,7 @@ def test_cli_repeated_demo_runs_start_separate_cases(tmp_path, monkeypatch):
     import sys
     out = tmp_path/"review"
     for reason in ["First local review", "Second local review"]:
-        monkeypatch.setattr(sys, "argv", ["accessscope", "--decision", "investigate", "--output", str(out), "--reason", reason])
+        monkeypatch.setattr(sys, "argv", ["accessscope", "--demo", "--decision", "investigate", "--output", str(out), "--reason", reason])
         main()
     with sqlite3.connect(out/"reviews.db") as db:
         assert db.execute("SELECT count(*) FROM decisions").fetchone()[0] == 2

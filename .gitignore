@@ -5,5 +5,8 @@
 __pycache__/
 # Credentials and local review artifacts must not become repository source files.
 .env
+.env.*
+!.env.example
+private/
 outputs/
 *.db

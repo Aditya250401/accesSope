@@ -1,4 +1,6 @@
-"""Reading stops 4-6 in WALKTHROUGH.md: connect facts, prose and a review pause.
+"""Fixed offline lesson plus shared brief validation and audit persistence.
+
+The real agent is in agent.py. This graph is explained in DEMO_WALKTHROUGH.md.
 
 START -> check_configuration -> explain -> validate -> review -> END
 The graph ends with a Decision in state. The CLI saves that decision separately.

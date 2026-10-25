@@ -1,18 +1,19 @@
 [project]
 name = "accessscope"
-version = "0.1.0"
+version = "0.2.0"
 description = "Evidence-based AWS access reviews with a bounded AI explanation workflow"
 requires-python = ">=3.12,<3.13"
-# Core demo: LangGraph executes the workflow; Pydantic checks record contracts.
-dependencies = ["langgraph>=1.2.16,<1.3", "pydantic>=2.12,<3"]
+# Live agent: OpenAI, scoped HTTP research, tracing, and checked graph contracts.
+dependencies = ["langgraph>=1.2.16,<1.3", "pydantic>=2.12,<3", "openai>=2,<3", "httpx>=0.28,<1", "python-dotenv>=1,<2", "langsmith>=0.4,<1"]
 
 [project.urls]
 Repository = "https://github.com/Aditya250401/accesSope"
 Issues = "https://github.com/Aditya250401/accesSope/issues"
 
 [project.optional-dependencies]
-# Install with uv sync --locked --extra live only when studying/using the adapters.
-live = ["boto3>=1.40,<2", "openai>=2,<3"]
+# Optional direct AWS collection; model/research dependencies are in the core.
+live = ["boto3>=1.40,<2"]
+db = ["psycopg[binary]>=3.2,<4"]
 
 [dependency-groups]
 # uv sync includes this development group; pytest is not part of the live workflow.
