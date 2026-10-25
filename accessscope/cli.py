@@ -18,8 +18,8 @@ from .settings import load_settings, require_agent_credentials
 
 
 def main():
-    # Arguments select the input and explainer independently. Reading real AWS
-    # does not automatically enable the model; enabling a model does not select AWS.
+    # Input source and runtime mode are separate choices. Normal operation uses
+    # the real agent; --demo explicitly selects the offline fixed-graph lesson.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", type=Path)
     parser.add_argument("--output", type=Path, default=Path("outputs/latest"))
@@ -88,8 +88,9 @@ def main():
             print("Tool:", entry["name"], "OK" if entry["ok"] else "REJECTED", flush=True)
     result = graph.get_state(config).values
     paused = bool(graph.get_state(config).next)
-    # This FIRST invocation runs checks -> explain -> validate -> review, then
-    # returns at the interrupt. No decision exists yet, even with --decision set.
+    # The streamed run prepares outcomes, loops agent/tools until submission, and
+    # pauses at review. The demo instead uses its fixed explain/validate chain.
+    # No decision exists yet, even when --decision will supply it below.
     print("AWS writes: none; effective access: not evaluated")
     print(result["brief"].summary)
     for finding in result["findings"]:

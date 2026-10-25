@@ -1,141 +1,281 @@
-# Read the real AccessScope agent
+# AccessScope: follow the data, then the agent
 
-Keep this page beside the code. Begin with one case and follow what changes in state. The original scripted lesson is preserved separately in [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md); the normal CLI now uses a real model and a conditional tool loop.
+Keep this page beside the code. Read one stop, find the named function, and predict its output before continuing. The aim is to rebuild the connections yourself rather than memorize a framework description.
 
-## 1. Start with the case, not the framework
+For the local database case, open `private/CASE_STUDY.md` alongside this page. That companion shows the actual redacted snapshot, every policy, all recorded tool arguments/results, and the saved review. It stays outside public Git. The original fixed-graph exercise is in [DEMO_WALKTHROUGH.md](DEMO_WALKTHROUGH.md).
 
-A workload uses a role. A role has policy documents. A reviewer needs to understand that access and the limits of the evidence before making a decision.
+## 1. Understand the job before opening Python
 
-The local default, `private/authsec-snapshot.json`, is a redacted database-derived case. It is not in public Git. It represents selected records from a source scan, not a fresh cloud scan. The included public fixture remains a fictional teaching input.
+A program runs using an AWS role. The role has policy documents. Somebody needs to review that configuration, know which evidence is missing, and record a decision.
 
-Open your snapshot locally. Find `workloads`, each `role_arn`, the corresponding role in `roles`, its policies and the coverage fields. These are the connections the agent will investigate. Do not guess owners, business purpose or effective access from names.
+The program is a **workload**, not automatically an AI agent. Our **AI agent** is the investigator reviewing the snapshot. These are different actors.
 
-## 2. Give each kind of information its own contract
+```text
+workload -> role -> policy statements
+                         |
+                    explicit checks
+                         |
+             AI investigates and explains
+                         |
+                  person reviews
+                         |
+                   decision record
+```
 
-Open [models.py](accessscope/models.py).
+AccessScope has one AI investigator, six tool definitions and four registered graph nodes. Several model turns reuse the same investigator. Seven model calls do not mean seven agents.
 
-`Snapshot` describes the input; `Finding` is one deterministic check outcome; `Brief` is an explanation; `Decision` is a review choice. These must not collapse into one model-generated paragraph. A paragraph cannot replace collected facts or authenticate a reviewer.
+The database export happens before the CLI run. During investigation, the agent reads an already prepared local snapshot. It does not have database credentials, a SQL tool, or permission to edit AWS.
 
-Pydantic parses/checks these records. `TypedDict` later names the graph's working fields. A snapshot fingerprint identifies exact stored contents; it is not a signature or a fresh AWS read.
+## 2. Start with the input and its contracts
 
-Open [import_iga.py](accessscope/import_iga.py) if your input came from the database. It maps selected exported records into that same contract, pseudonymizes identifiers, redacts resource/condition strings and creates provenance before model use. It does not infer that a recorded owner accepted responsibility. The private salt enables stable pseudonyms locally without publishing the original identifiers.
+Open your snapshot, then [models.py](accessscope/models.py). The same source may contain facts of different kinds:
 
-## 3. Derive the checks before asking the model
-
-Open [rules.py](accessscope/rules.py), starting at `evaluate`.
-
-For every selected workload, ordinary code evaluates accepted production ownership, a recorded review deadline, and the exact configured wildcard-action Allow pattern. Each returns `finding`, `satisfied`, `unknown` or `not_applicable`.
-
-Unknown is a result, not an exception to erase. Complete IAM inventory does not establish complete business context. A satisfied narrow wildcard search does not establish least privilege. In a database case with no verified owner-acceptance or purpose coverage, the context-dependent checks remain unknown.
-
-Follow `evidence_catalog`: an outcome's evidence IDs connect it to actual policy/context records. Follow `shared_role_consumers`: changing one role can affect several selected programs. These helpers are reused by the agent's tools.
-
-## 4. Read the capabilities before the model loop
-
-Open [agent.py](accessscope/agent.py), from the argument contracts through `TOOLS`.
-
-The model sees tool descriptions and JSON argument schemas. Python owns the implementations. A proposed tool name or role ARN is not permission to execute it.
-
-| Capability | Need | Enforcement |
+| Input | What it describes | What it does not establish |
 | --- | --- | --- |
-| `get_review_findings` | Understand the case and evidence gaps | Returns this snapshot's evaluated outcomes |
-| `get_evidence` | Inspect a cited source | ID must belong to the selected catalog |
-| `get_role_evidence` | Avoid one model round trip per policy | Role must be selected; combined result stays bounded |
-| `get_shared_consumers` | Check known shared impact | Returns only selected workload bindings |
-| `search_aws_docs` | Research current provider guidance | Fixed public query topics, AWS-domain result filtering, two-search budget |
-| `submit_review` | Finish with a consumable brief | Shape/reference checks, read-before-cite and known web-source IDs |
+| Workload-to-role binding | Which role the collected workload uses | Every other consumer of that role |
+| Policy document | A configured statement | Whether a particular request will succeed |
+| Owner/deadline context | Supplied business information | Accepted ownership unless that is established |
+| Coverage flags | What evidence the import declares available | A general certificate that all access is safe |
+| Source/export dates | Which point in time the records represent | That AWS still has the same state now |
 
-Tavily gets generic public queries defined in `DOC_QUERIES`. The model cannot make it search for a private account, policy body or arbitrary generated string. Research snippets remain untrusted data and cannot overrule account evidence.
+### Why separate record classes?
 
-Read `INSTRUCTIONS`. It tells the agent what investigation to perform, how to preserve uncertainty and how to finish. A prompt is guidance. Scope and budgets are enforced in code even if the model ignores the prompt.
+`Snapshot` holds input. `Finding` holds one rule outcome. `Brief` holds an explanation. `Decision` holds a review choice. An explanation must not silently replace the facts or a person's decision.
 
-## 5. Build the loop in your head
+The name `Finding` is broader than it sounds: it stores satisfied and unknown outcomes too. Count `outcome == "finding"` to count active findings.
 
-`AgentState` extends the common state with a conversation, pending tool calls, a tool log, read evidence IDs, web sources, a completion flag and usage counters. Credentials/SDK clients stay outside state in the constructed graph's dependencies.
+These are Pydantic contracts: parsing checks fields/types and selected relations. `extra="forbid"` rejects unexpected fields. `Snapshot.unique_references` checks duplicate IDs, account-role scope and the reserved context namespace. It does not prove the source is authentic.
 
-Inside `build_agent_graph`, read `prepare`, `agent`, `tools`, then `review`.
+Useful conversions:
 
-```text
-prepare
-  -> agent chooses a tool
-  -> tools validates arguments and executes its allowed operation
-       -> agent sees the result and chooses again
-       -> ...
-       -> valid submit_review
-  -> review pauses for external human input
-  -> review resumes and validates the decision
-  -> END
+| Expression | Produces | Why it appears |
+| --- | --- | --- |
+| `Snapshot.model_validate_json(text)` | Checked snapshot with parsed dates | Read an input file |
+| `record.model_dump(mode="json")` | JSON-compatible dictionary | Put a record into a tool result/report |
+| `record.model_dump_json()` | JSON text | Write a complete record |
+
+### If the input came from the database
+
+Open [import_iga.py](accessscope/import_iga.py), `convert`. It accepts a selected export, not a database connection. The one-off export is a separate read-only operation.
+
+The converter checks workspace/chosen-role consistency, pseudonymizes identifiers using a private HMAC salt, redacts sensitive policy values, maps records into `Snapshot`, and writes provenance. The current converter builds a one-role case; it is not a general multi-account importer.
+
+It preserves action names needed by the narrow checker while masking resource/condition strings. Redacted policies are explanation evidence, not deployable IAM documents. Missing owner acceptance or purpose coverage is kept unestablished.
+
+The fingerprint is a hash of the complete serialized snapshot. It binds review to stored contents. It is not a signature, authentication mechanism or live AWS comparison. A changed timestamp also changes it.
+
+**Before continuing:** follow one workload's `role_arn` to its role and one policy's `evidence_id` to its document.
+
+## 3. Watch ordinary code derive the outcomes
+
+Open [rules.py](accessscope/rules.py), `evaluate`.
+
+It builds an ARN-to-role lookup, then performs three checks for each workload. The small inner `emit` helper creates each outcome record. No model runs here.
+
+| Check | Evidence dependency | Main branches |
+| --- | --- | --- |
+| Accepted production owner | Business context | Incomplete context -> unknown; confirmed non-production -> not applicable; accepted owner -> satisfied; otherwise finding |
+| Review deadline | Context and `review_due` | Missing context/date -> unknown; strictly before `as_of` -> finding; otherwise satisfied |
+| Exact wildcard-action Allow | IAM and role-policy coverage | Incomplete -> unknown; exact configured pattern -> finding; unsupported shape without that observation -> unknown; otherwise satisfied |
+
+### Action and Resource answer different questions
+
+In IAM, `Action` names operations and `Resource` names the objects they apply to. A resource wildcard is different from an action wildcard. [AWS Action](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_action.html), [AWS Resource](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_resource.html).
+
+This fictional fragment has a resource wildcard:
+
+```json
+{"Effect": "Allow", "Action": "ec2:DescribeInstances", "Resource": "*"}
 ```
 
-`prepare` validates the snapshot, derives outcomes and initializes counters. It does not call a model.
+The current checker searches for exact `Action: "*"` (or a list containing it), not every broad resource scope or service-specific pattern such as `ec2:*`. A satisfied result answers only that implemented question. The checker does not fully validate IAM syntax or compute effective permissions.
 
-`agent` sends the conversation and tool schemas to GPT-4o. A response requests one function call. The code preserves that output as primitive JSON and records actual returned token usage. It limits model turns, per-request output, timeout and context size.
+### Connect outcomes back to records
 
-`tools` parses the selected function's arguments with its Pydantic contract. The executor checks snapshot scope, then returns a `function_call_output` carrying the matching call ID. That call ID connects the model's request to our result. A tool failure is returned as a bounded error so the model can correct the request within its remaining budget.
+`evidence_catalog` maps IDs to policy/context records. `context:<workload-id>` is generated by code; policy IDs come from the snapshot. This is how citations become inspectable sources rather than decorative text.
 
-The conditional edge routes back to `agent` until `submit_review` passes validation. A model saying "finished" in prose is not enough to set `finished=True`.
+The context catalog currently labels its source as operator-supplied business context. For an imported case, inspect the provenance: the importer may have supplied explicit unknown placeholders, not independently verified ownership.
 
-`StateGraph` is the builder: register functions and routes, then `compile` creates an executable graph. The returned object runs when the CLI calls `stream`/`invoke`. No custom reducers are used; each node returns updated values, preserving fields it omitted. Conversation/history updates therefore explicitly include the preceding list.
+`shared_role_consumers` groups selected workloads by role. The live consumer tool also returns a single selected consumer when appropriate. Neither is an AWS-wide dependency inventory.
 
-**Check yourself:** point to the actual edge that repeats the model/tool cycle. Then point to the executor branch that rejects an out-of-scope role. Those are different responsibilities.
+**Before continuing:** if only IAM coverage fails, explain why an independently complete ownership record need not become unknown. If context coverage fails, explain why that does not prove an owner is absent.
 
-## 6. Separate an agent submission from a human decision
+## 4. See what the AI is actually allowed to know and do
 
-The final `Submission` contains a `Brief` and web-source IDs. The validator ensures references exist, active findings are covered, cited evidence was read and cited web IDs were returned by research. It does not prove every sentence is supported merely because IDs match.
+Open [agent.py](accessscope/agent.py), first the argument contracts, `ARGUMENTS`, `TOOLS`, and `INSTRUCTIONS`.
 
-The `review` node interrupts only after this investigation has finished. Its checkpoint/thread ID preserves where execution paused. On resume, that node restarts and `interrupt()` returns the external choice; model investigation is not repeated.
+A tool has two sides: a description/schema sent to the model, and Python code that executes a validated request. The schema does not itself run a function or grant access.
 
-The decision fingerprint must match the stored snapshot. It does not authenticate the reviewer or verify that AWS stayed unchanged afterward. There is no permission-change executor.
+| Tool | Model supplies | Executor provides |
+| --- | --- | --- |
+| `get_review_findings` | Empty arguments | This case's date, coverage, workload bindings and all rule outcomes |
+| `get_evidence` | Exact `evidence_id` | One source from the selected catalog |
+| `get_role_evidence` | Selected `role_arn` | Its collected policies in one bounded lookup |
+| `get_shared_consumers` | Selected `role_arn` | Known selected workload IDs, with a scope limitation |
+| `search_aws_docs` | One allowed topic | Tavily sources from AWS documentation |
+| `submit_review` | `Brief` plus web-source IDs | Acceptance only if the completion checks pass |
 
-Open [workflow.py](accessscope/workflow.py), `record_decision`. SQLite stores completed decisions with `(case_id, fingerprint)` as the key. An identical retry retains one row; conflicting input is rejected. This audit survives on disk. The current in-memory graph checkpoint does not survive process restart.
+The prompt requests a sensible investigation. The executor independently checks capability names, arguments, role/evidence scope and budgets. A model proposing another tool name does not create that capability.
 
-The fixed `build_graph`/`DemoExplainer` lesson and older one-call explainer are available in that file for learning/backward compatibility. The normal CLI constructs `build_agent_graph` from `agent.py`.
+### What is the AI's job if the rules already ran?
 
-## 7. Connect the entrypoint and the output files
+The AI chooses which context/policies to inspect next, connects shared impact, researches general guidance and synthesizes useful reviewer questions. It does not invent the deterministic outcomes, authenticate a reviewer or decide what AWS authorizes.
 
-Open [cli.py](accessscope/cli.py) alongside [settings.py](accessscope/settings.py).
+This is a defensible role, but it is still a hypothesis about usefulness. Compare its output with a template baseline before claiming it saves review time or improves accuracy. The fact that a model call happened is not proof of value.
 
-```text
-arguments and local settings
-  -> read selected snapshot (or explicit AWS collection)
-  -> save input
-  -> construct real agent graph
-  -> stream tool progress until review pause
-  -> save investigation.json
-  -> collect a review choice
-  -> resume same thread
-  -> save audit and review.json
+## 5. Understand the state before reading the loop
+
+`AgentState` extends the common state in [workflow.py](accessscope/workflow.py).
+
+| Field | Why the next operation needs it |
+| --- | --- |
+| `snapshot`, `fingerprint`, `findings` | Evidence, version binding and deterministic outcomes |
+| `task` | User's investigation request |
+| `conversation` | Previous model requests and tool results |
+| `pending_calls` | The one proposed operation waiting for execution |
+| `seen_evidence` | IDs whose records were successfully returned |
+| `tool_log` | Inspectable history of attempted operations/results |
+| `research_sources`, `cited_source_ids` | Returned public guidance and the sources used |
+| `finished`, `brief` | Whether a structured submission passed the gate |
+| `model_calls`, `usage` | Logical call budget and returned token totals |
+| `decision` | External review input after the pause |
+
+`TypedDict` names working fields; it is not another database or Pydantic parser. `total=False` allows fields to appear as execution progresses. No custom reducers are defined. A returned field replaces that field's value; omitted fields remain.
+
+That is why conversation updates explicitly use `old_conversation + new_items`. Lists do not automatically append themselves.
+
+## 6. Follow one model request and one tool response
+
+Inside `build_agent_graph`, read `prepare`, `agent`, and `tools` in that order.
+
+`prepare` parses the snapshot, computes the fingerprint and outcomes, and initializes empty histories/counters. The data is in graph state, but it has not automatically become model input.
+
+The first `agent` call sends the task, instructions and tool definitions. Its `input` is the selected `conversation`, not the entire `state` dictionary. Snapshot information reaches the model when tools return it. Tracing is a separate destination and may record node state.
+
+The model responds with a function-call item. Its `arguments` field is JSON text. The executor uses the named argument contract's `model_validate_json` to parse it, then runs an allowed branch. It does not evaluate arbitrary generated Python.
+
+The result is returned in this protocol shape; the IDs below are schematic:
+
+```json
+{"type": "function_call_output", "call_id": "provider-call-id", "output": "JSON result text"}
 ```
 
-The local `.env` is ignored; exported variables take precedence. `CHAT_MODEL=gpt-4o` selects the requested model, with `OPENAI_MODEL` as an optional override. A missing private input or required credential is an error; it does not select dummy output.
+`call_id` connects our result to the model's requested operation. The next model request includes the previous function call and this matching result. SDK outputs are converted to primitive JSON before entering checkpoint state.
 
-`--demo` explicitly selects the old offline lesson and does not load `.env`. The separate teaching command `python -m accessscope.walkthrough` remains offline too.
+The `tool_log` report stores operation arguments/results, not every raw provider response. Use the trace for provider-call details; do not expect every call ID in `review.json`.
 
-`investigation.json` is saved before the human prompt and includes chosen tools, results, web sources, model-call count, usage and trace run ID. `review.json` adds the completed choice; `reviews.db` retains separate case rows. `--decision investigate` supplies an external choice automatically while still exercising the real interrupt/resume.
+### What causes the loop to continue?
 
-With tracing enabled, selected evidence/tool results go to LangSmith. Do not treat "tracing" as harmless local logging. Use an authorized payload and understand the destination. API keys themselves are not graph state or model input.
+```mermaid
+flowchart TD
+    S["Input Snapshot + task"] --> P["prepare: checks and counters"]
+    P --> A["agent: real model request"]
+    A --> T["tools: validate and execute one operation"]
+    T -->|"finished = false"| A
+    T -->|"validated submit_review"| R["review: pause for external decision"]
+    R --> E["END: decision in state"]
+    E --> D["CLI saves SQLite audit and report"]
+```
 
-## 8. Swap data sources without rewriting the investigator
+The conditional edge is ordinary code:
 
-Open [collect.py](accessscope/collect.py). It performs scoped read-only AWS collection and returns the same `Snapshot` type. The database importer and direct collector are input adapters; the rules and agent operate on their common output.
+```python
+builder.add_conditional_edges(
+    "tools", lambda s: "review" if s["finished"] else "agent"
+)
+```
 
-For the database case, inspect the private provenance file for source scan time and missing context. For direct collection later, use explicit AWS profile/region and exact workload ARNs. Do not turn a denied scan, unsupported construct or stale snapshot into a clean conclusion.
+The model influences which tool it proposes. The application controls execution and the route to review. A sentence saying "I'm done" cannot set `finished=True`.
 
-## 9. Challenge the boundaries
+`StateGraph(AgentState)` is the builder. `add_node` registers functions without calling them. Edges describe transitions. `compile` returns the executable object; `stream`/`invoke` later run it with input.
 
-Run `uv run pytest -q`. [test_review.py](tests/test_review.py) covers the original contracts, rules, pause/resume, audit and collection boundaries. [test_agent.py](tests/test_agent.py) exercises the actual conditional agent graph with fake API boundaries: chosen tools, rejected scope, read-before-cite, turn budget, research filtering and no repeat calls on human resume.
+## 7. Understand completion and human review
 
-Fakes are appropriate for deterministic regression checks. They do not substitute for a live integration run and cannot measure real-model factuality, helpfulness or cost. Inspect a live report to establish what actually happened on that run.
+Read the `submit_review` branch and the shared `validate_brief` function.
 
-## 10. Explain a real run without exaggeration
+The code checks shape, nonempty summary, known IDs, coverage of active findings, read-before-cite, at least some context/policy inspection when available, and returned web-source IDs. `seen_evidence` records successful retrieval, not proof that the model understood a record.
 
-Use the report, not a memorized success story. Say which snapshot was used, when its source scan happened, which checks were unknown, which tools the model chose, what sources it consulted and what the reviewer decided.
+The current policy-inspection gate recognizes IDs starting with `policy:`; the importer follows that convention. A general importer accepting arbitrary evidence-ID formats should derive the policy-ID set from typed records instead of relying on that prefix. The existence/citation checks still use the selected catalog.
 
-A strong architecture answer follows **need -> mechanism -> limitation -> improvement**:
+With no active findings, the required active-ID set is empty. Unknown/satisfied outcomes may still be cited. A brief naming six outcome IDs does not thereby identify six security failures.
 
-- Many policies create repeated round trips -> batch selected role evidence -> keep the result bounded -> measure tokens/latency and missing evidence before changing budgets.
-- A review must name its input -> snapshot-bound decision -> no live-state recheck -> revalidate before any future write.
-- A model can cite real IDs with false prose -> mechanical validation plus human review -> no semantic guarantee -> evaluate labelled cases against a template baseline.
-- A hosted product needs restart recovery -> in-memory saver today -> unfinished state is lost -> use durable checkpoints and authorize reviewer access.
+Some instructions are prompt guidance rather than enforced properties: the 220-word preference, a request to research, and semantic faithfulness. The executor enforces research attempt limits and source-ID membership, but does not require a nonempty source list for every submission. Know which guarantees come from code.
 
-Finally, draw the loop from memory. Explain who chooses a tool, who enforces scope, why one role can affect two workloads, why unknown is preserved, and what happens when the human resumes. That is the intuition you need to defend the implementation.
+`review` calls `interrupt`. A checkpointer retains state and `thread_id` identifies it. On resumption, the interrupted node restarts and `interrupt()` returns the supplied decision. Model work sits earlier, so ordinary review resumption does not repeat it. [LangGraph interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts).
+
+The decision fingerprint must match stored evidence. It does not authenticate the reviewer or re-read current AWS state. `retain`, `investigate` and `propose_change` record review intent; none executes a permission change.
+
+## 8. Connect the CLI, files and identities
+
+Now read [cli.py](accessscope/cli.py) from `main`, alongside [settings.py](accessscope/settings.py).
+
+```text
+parse arguments -> load live settings -> select input
+  -> save snapshot -> construct graph -> stream until pause
+  -> save investigation -> obtain choice -> resume same thread
+  -> record audit -> save report -> verify trace delivery
+```
+
+The normal default is a private snapshot plus the real agent. `--demo` selects the old scripted lesson explicitly. Missing live input/credentials does not silently select dummy output.
+
+| File | Role and lifetime |
+| --- | --- |
+| `snapshot.json` | Input used for this run |
+| `investigation.json` | Tool history, sources, usage and brief; saved before the human prompt |
+| `review.json` | Completed case including outcomes and decision |
+| `reviews.db` | Persistent completed-decision rows |
+| In-memory checkpointer | Unfinished graph state, lost on process restart |
+
+The default directory is `outputs/latest`; new runs overwrite its JSON exports. SQLite retains case rows, but does not archive every historical snapshot/brief for you. A complete audit archive would need immutable per-case artifacts as well.
+
+`case_id` names the review. This CLI also uses it as `thread_id`. The snapshot fingerprint names exact input contents. A trace run ID names a tracing span, not evidence or reviewer authority. Resuming review creates another trace root while retaining the graph thread.
+
+`record_decision` uses `(case_id, fingerprint)` as its SQLite key and compares the stored decision payload. Exact retries retain one row; conflicting payloads are rejected. Fresh default CLI invocations get fresh case IDs, so they are separate reviews.
+
+### Configuration and data destinations
+
+Local `.env` is loaded for live operation, with exports taking precedence. `OPENAI_MODEL` overrides `CHAT_MODEL`. Local project tracing uses `LANGSMITH_PROJECT`; legacy agent-address labels are moved to metadata to avoid conflicting destinations.
+
+OpenAI receives the model conversation. Tavily receives fixed public documentation queries, not private account strings. LangSmith can receive selected evidence, node/tool results and model inputs/outputs. Local state and exported reports do not contain API keys. Use authorized evidence for those destinations.
+
+## 9. Know the limits and how they fail
+
+| Limit/check | Implemented behavior |
+| --- | --- |
+| Model turns | At most ten; reaching the ceiling before accepted submission stops execution |
+| Tool calls per turn | Exactly one required; parallel tool calls are disabled |
+| Research | At most two attempts, including failed attempts |
+| Model request | 30-second client timeout; no automatic SDK retries; 1,600 output-token cap |
+| Conversation | 60,000 serialized-character guard before a request |
+| Tool result | 16,000 serialized-character guard; an oversized result is rejected |
+| Bad tool arguments/scope | Bounded error returned to the model; attempt stays in the log |
+| Provider failure | Run can stop before a completed review; no cloud action follows |
+
+Character budgets are not exact token/cost budgets. Token usage is summed from responses and includes history sent repeatedly. Trace spans are observations, not additional model generations.
+
+The original checks are in [test_review.py](tests/test_review.py); real-loop boundary checks are in [test_agent.py](tests/test_agent.py). Unit tests block network and use fake providers. Saved live reports establish what happened on particular real runs, not an accuracy percentage.
+
+Read an existing report without starting another paid run:
+
+```bash
+uv run python -c 'import json; from pathlib import Path; r=json.loads(Path("outputs/live-authsec-final/review.json").read_text()); print(r["mode"], r["model_calls"]); print([x["name"] for x in r["tool_log"]])'
+```
+
+That local path exists after the recorded case run; a fresh clone has no private input or saved reports. To start a new authorized live review, use `uv run python -m accessscope.cli` from the project folder.
+
+## 10. Improve one demonstrated weakness at a time
+
+| Next step | Why it comes next | Concrete acceptance check |
+| --- | --- | --- |
+| Labelled semantic evaluation | Known IDs can accompany false prose | Cases catch invented owners, effective-access claims and consumer-scope overclaims; compare with a template baseline |
+| More authoritative context | Current context may be unknown rather than missing in reality | Owner acceptance/deadline evidence has provenance and field-specific coverage |
+| Immutable case artifacts | `outputs/latest` overwrites historical JSON | An old audit row can recover its exact input, brief, rule/prompt/model versions and decision |
+| Durable checkpoints and authenticated review | Current unfinished state and reviewer identity are local | A permitted reviewer can resume after restart; another workspace cannot read/resume the case |
+| Freshness and direct AWS integration | Current database evidence represents an earlier scan | Same contract from a scoped live read; failure remains partial; old evidence is not silently current |
+| Measured optimization | More agents may add cost without value | Compare quality, useful questions, tokens, latency and duplicate work on the same cases |
+
+For direct input collection, read [collect.py](accessscope/collect.py). It is an input adapter, not an agent permission-write tool. For a larger importer, define stable account-level pseudonyms, multiple roles and explicit scope/coverage before expanding the current one-role case.
+
+A future agent identity integration would authenticate the caller and enforce scopes at server-side tool boundaries. Current in-memory ID membership checks are not an AuthSec OIDC/SPIFFE integration. A future remediation executor would additionally need fresh-state checks and specifically authorized operations; it does not belong in an unrestricted model tool.
+
+Your closed-book explanation should follow the data: input -> repeatable outcomes -> selected evidence -> model/tool loop -> validated submission -> external review -> stored decision. Then change one input and explain what changes. That is the skill the architecture discussion should reveal.

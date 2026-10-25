@@ -87,7 +87,7 @@ Collection uses STS `GetCallerIdentity`, paginated IAM `GetAccountAuthorizationD
 
 ## Learn and verify
 
-Start with [WALKTHROUGH.md](WALKTHROUGH.md) for the real agent. The original fixed-graph lesson is explicitly offline:
+Start with [WALKTHROUGH.md](WALKTHROUGH.md) for the real agent: it follows input contracts, exact rules, model-visible information, tool execution, state updates, review and audit. The local `private/CASE_STUDY.md` companion explains the saved database case, its full redacted snapshot and recorded tool sequence; it is deliberately absent from public Git. The original fixed-graph lesson is explicitly offline:
 
 ```bash
 uv run python -m accessscope.cli --demo --decision investigate
